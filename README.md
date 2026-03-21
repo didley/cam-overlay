@@ -1,46 +1,48 @@
 # Cam Overlay
 
-A minimal GNOME app that displays a webcam preview as a borderless overlay, for use during screen recording.
+A minimal cross-platform app that displays a webcam preview as a borderless, always-on-top overlay for use during screen recording or presentations.
 
-No recording — just a live preview with zoom, shape, and flip controls via right-click menu.
+No recording — just a live preview with zoom, shape, flip, and scale controls via right-click menu.
 
 ## Features
 
-- Live webcam preview (PipeWire)
+- Live webcam preview (V4L2 on Linux, AVFoundation on macOS)
 - Circle or rounded rectangle shape clipping
 - 1×, 1.5×, and 2× zoom
+- Scale modes: Crop, Fit, Stretch
 - Horizontal mirror/flip
-- Double-click to expand to near-fullscreen
-- Drag to move the window
+- Double-click to expand fullscreen
+- Drag to move, edge-drag to resize
+- Right-click context menu
+- Always-on-top window
 - Settings persist across restarts
-
-## Tips
-
-- Use your compositor's window manager (e.g. `Super+Right Click` on GNOME) to set **Always on Top**
-- Resize by dragging the window edges/corners
 
 ## Build
 
-### Flatpak (recommended)
+Requires only a Rust stable toolchain — no system dev packages needed.
 
 ```sh
-flatpak-builder --user --install --force-clean build io.github.didley.CamOverlay.yml
-flatpak run io.github.didley.CamOverlay
+cargo build --release
 ```
 
-### Local (meson)
+### Run
 
 ```sh
-meson setup build
-ninja -C build
-ninja -C build install
+cargo run --release
 ```
 
 ## Requirements
 
-- GNOME Platform 49
-- GStreamer with PipeWire support (`gst-plugins-pipewire`)
 - Rust stable toolchain
+- Linux: a V4L2-compatible webcam
+- macOS: camera access permission (prompted on first run)
+
+## Tech Stack
+
+- **winit** — cross-platform windowing
+- **wgpu** — GPU-accelerated rendering
+- **nokhwa** — webcam capture (V4L2 / AVFoundation)
+- **confy** — cross-platform settings persistence
 
 ## License
 
