@@ -80,7 +80,13 @@ impl CamOverlayWindow {
 
         let overlay_container = gtk4::Overlay::new();
         let video_picture = gtk4::Picture::new();
-        video_picture.set_content_fit(gtk4::ContentFit::Cover);
+        let fit_mode = settings.string("fit-mode");
+        let fit = match fit_mode.as_str() {
+            "contain" => gtk4::ContentFit::Contain,
+            "fill"    => gtk4::ContentFit::Fill,
+            _         => gtk4::ContentFit::Cover,
+        };
+        video_picture.set_content_fit(fit);
         overlay_container.set_child(Some(&video_picture));
         self.set_content(Some(&overlay_container));
 
@@ -294,11 +300,8 @@ impl CamOverlayWindow {
 
         if expanded {
             imp.is_expanded.set(false);
-            self.set_size_request(-1, -1);
-            self.set_default_size(imp.compact_width.get(), imp.compact_height.get());
-
+            self.unfullscreen();
             if let Some(overlay) = imp.overlay_container.borrow().as_ref() {
-                overlay.remove_css_class("expanded");
                 let shape = imp.settings.borrow().as_ref()
                     .map(|s| s.string("shape").to_string())
                     .unwrap_or_else(|| "circle".to_string());
@@ -310,26 +313,11 @@ impl CamOverlayWindow {
             if w > 0 { imp.compact_width.set(w); }
             if h > 0 { imp.compact_height.set(h); }
             imp.is_expanded.set(true);
-
-            if let Some(display) = gdk::Display::default() {
-                if let Some(monitor) = display.monitors()
-                    .item(0)
-                    .and_downcast::<gdk::Monitor>()
-                {
-                    let geometry = monitor.geometry();
-                    let padding = 60;
-                    let expanded_w = geometry.width() - padding * 2;
-                    let expanded_h = geometry.height() - padding * 2;
-                    self.set_size_request(expanded_w, expanded_h);
-                    self.set_default_size(expanded_w, expanded_h);
-                }
-            }
-
             if let Some(overlay) = imp.overlay_container.borrow().as_ref() {
                 overlay.remove_css_class("circle");
                 overlay.remove_css_class("rounded-rect");
-                overlay.add_css_class("expanded");
             }
+            self.fullscreen();
         }
     }
 
@@ -346,6 +334,12 @@ impl CamOverlayWindow {
         shape_section.append(Some("Circle"), Some("win.shape::circle"));
         shape_section.append(Some("Rounded Rectangle"), Some("win.shape::rounded-rect"));
         menu.append_section(Some("Shape"), &shape_section);
+
+        let fit_section = gio::Menu::new();
+        fit_section.append(Some("Crop"), Some("win.fit::cover"));
+        fit_section.append(Some("Fit"), Some("win.fit::contain"));
+        fit_section.append(Some("Stretch"), Some("win.fit::fill"));
+        menu.append_section(Some("Fit"), &fit_section);
 
         let mirror_section = gio::Menu::new();
         mirror_section.append(Some("Mirror"), Some("win.flip"));
@@ -416,6 +410,26 @@ impl CamOverlayWindow {
         });
         self.add_action(&shape_action);
 
+        // Fit mode action
+        let current_fit = settings.string("fit-mode").to_string();
+        let fit_action = gio::SimpleAction::new_stateful(
+            "fit",
+            Some(&glib::VariantTy::STRING),
+            &current_fit.to_variant(),
+        );
+        let win = self.clone();
+        fit_action.connect_activate(move |action, param| {
+            if let Some(v) = param {
+                let mode: String = v.get().unwrap_or_default();
+                action.set_state(&mode.to_variant());
+                win.apply_fit_mode(&mode);
+                if let Some(s) = win.imp().settings.borrow().as_ref() {
+                    let _ = s.set_string("fit-mode", &mode);
+                }
+            }
+        });
+        self.add_action(&fit_action);
+
         // Flip action
         let flipped = settings.boolean("flipped");
         let flip_action = gio::SimpleAction::new_stateful("flip", None, &flipped.to_variant());
@@ -465,6 +479,17 @@ impl CamOverlayWindow {
             overlay.remove_css_class("circle");
             overlay.remove_css_class("rounded-rect");
             overlay.add_css_class(shape);
+        }
+    }
+
+    fn apply_fit_mode(&self, mode: &str) {
+        let fit = match mode {
+            "contain" => gtk4::ContentFit::Contain,
+            "fill"    => gtk4::ContentFit::Fill,
+            _         => gtk4::ContentFit::Cover,
+        };
+        if let Some(picture) = self.imp().video_picture.borrow().as_ref() {
+            picture.set_content_fit(fit);
         }
     }
 

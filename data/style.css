@@ -1,5 +1,6 @@
-window {
-    background-color: transparent;
+window,
+window.background {
+    background: none;
 }
 
 .circle {
@@ -9,10 +10,5 @@ window {
 
 .rounded-rect {
     border-radius: 16px;
-    overflow: hidden;
-}
-
-.expanded {
-    border-radius: 40px;
     overflow: hidden;
 }

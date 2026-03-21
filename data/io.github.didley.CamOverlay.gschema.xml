@@ -26,5 +26,10 @@
       <summary>Window height</summary>
       <description>Compact mode window height in pixels</description>
     </key>
+    <key name="fit-mode" type="s">
+      <default>'cover'</default>
+      <summary>Video fit mode</summary>
+      <description>How the video fits in the window: 'cover', 'contain', or 'fill'</description>
+    </key>
   </schema>
 </schemalist>
