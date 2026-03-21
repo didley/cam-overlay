@@ -448,7 +448,6 @@ impl CamOverlayWindow {
 
         let fit_section = gio::Menu::new();
         fit_section.append(Some("Crop"), Some("win.fit::cover"));
-        fit_section.append(Some("Fit"), Some("win.fit::contain"));
         fit_section.append(Some("Stretch"), Some("win.fit::fill"));
         menu.append_section(Some("Scale"), &fit_section);
 
@@ -633,17 +632,6 @@ impl CamOverlayWindow {
 
     fn apply_fit_mode(&self, mode: &str) {
         let fit = match mode {
-            "contain" => {
-                let imp = self.imp();
-                let vw = imp.video_width.get();
-                let vh = imp.video_height.get();
-                let w = self.default_width();
-                if vw > 0 && vh > 0 && w > 0 {
-                    let new_h = (w as f64 * vh as f64 / vw as f64) as i32;
-                    self.set_default_size(w, new_h);
-                }
-                gtk4::ContentFit::Cover
-            }
             "fill" => gtk4::ContentFit::Fill,
             _ => gtk4::ContentFit::Cover,
         };
