@@ -1,2 +1,0 @@
-pub const APP_ID: &str = "@APP_ID@";
-pub const VERSION: &str = "@VERSION@";
