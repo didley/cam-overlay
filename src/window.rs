@@ -80,7 +80,7 @@ impl CamOverlayWindow {
 
         let overlay_container = gtk4::Overlay::new();
         let video_picture = gtk4::Picture::new();
-        video_picture.set_content_fit(gtk4::ContentFit::Fill);
+        video_picture.set_content_fit(gtk4::ContentFit::Cover);
         overlay_container.set_child(Some(&video_picture));
         self.set_content(Some(&overlay_container));
 
@@ -199,20 +199,41 @@ impl CamOverlayWindow {
         let drag = gtk4::GestureDrag::new();
         drag.set_button(1);
 
+        // Track whether this drag has already initiated a move/resize
+        let initiated = std::rc::Rc::new(std::cell::Cell::new(false));
+        // Capture the edge at press time (cursor may leave edge zone during drag)
+        let edge_at_press: std::rc::Rc<std::cell::Cell<Option<gdk::SurfaceEdge>>> =
+            std::rc::Rc::new(std::cell::Cell::new(None));
+
+        let win1 = self.clone();
+        let initiated_begin = initiated.clone();
+        let edge_begin = edge_at_press.clone();
+        drag.connect_drag_begin(move |_, _, _| {
+            initiated_begin.set(false);
+            edge_begin.set(*win1.imp().cursor_edge.borrow());
+        });
+
         let win = self.clone();
-        drag.connect_drag_begin(move |gesture, x, y| {
-            let edge = *win.imp().cursor_edge.borrow();
+        drag.connect_drag_update(move |gesture, offset_x, offset_y| {
+            if initiated.get() {
+                return;
+            }
+            // Wait for meaningful movement before committing to a drag
+            if (offset_x * offset_x + offset_y * offset_y) < 16.0 {
+                return;
+            }
+            initiated.set(true);
+            let edge = edge_at_press.get();
             use gtk4::prelude::NativeExt;
             let win_ref = win.upcast_ref::<gtk4::Window>();
             if let Some(surface) = win_ref.surface() {
                 if let Ok(toplevel) = surface.downcast::<gdk::Toplevel>() {
                     if let Some(device) = gesture.device() {
+                        gesture.set_state(gtk4::EventSequenceState::Claimed);
                         if let Some(e) = edge {
-                            gesture.set_state(gtk4::EventSequenceState::Claimed);
-                            toplevel.begin_resize(e, Some(&device), 1, x, y, gdk::CURRENT_TIME);
+                            toplevel.begin_resize(e, Some(&device), 1, 0.0, 0.0, gdk::CURRENT_TIME);
                         } else if !win.imp().is_expanded.get() {
-                            gesture.set_state(gtk4::EventSequenceState::Claimed);
-                            toplevel.begin_move(&device, 1, x, y, gdk::CURRENT_TIME);
+                            toplevel.begin_move(&device, 1, 0.0, 0.0, gdk::CURRENT_TIME);
                         }
                     }
                 }
@@ -252,6 +273,9 @@ impl CamOverlayWindow {
     fn setup_double_click(&self) {
         let click = gtk4::GestureClick::new();
         click.set_button(1);
+        // Capture phase runs before the drag gesture, so double-click
+        // can claim the event before drag_update sees it
+        click.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
         let win = self.clone();
         click.connect_pressed(move |gesture, n_press, _, _| {

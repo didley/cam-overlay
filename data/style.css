@@ -1,3 +1,7 @@
+window {
+    background-color: transparent;
+}
+
 .circle {
     border-radius: 50%;
     overflow: hidden;
