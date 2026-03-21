@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Cam Overlay
+Comment=Webcam preview overlay for screen recording
+Exec=cam-overlay
+Icon=io.github.didley.CamOverlay
+Terminal=false
+Type=Application
+Categories=Video;Utility;
+Keywords=webcam;camera;overlay;preview;

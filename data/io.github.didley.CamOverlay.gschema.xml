@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="io.github.didley.CamOverlay" path="/io/github/didley/CamOverlay/">
+    <key name="zoom-level" type="i">
+      <default>1</default>
+      <summary>Zoom level</summary>
+      <description>Camera zoom level: 1=1x, 2=1.5x, 3=2x</description>
+    </key>
+    <key name="shape" type="s">
+      <default>'circle'</default>
+      <summary>Overlay shape</summary>
+      <description>Shape of the camera overlay: 'circle' or 'rounded-rect'</description>
+    </key>
+    <key name="flipped" type="b">
+      <default>false</default>
+      <summary>Mirror video</summary>
+      <description>Whether the camera feed is horizontally flipped</description>
+    </key>
+    <key name="window-width" type="i">
+      <default>200</default>
+      <summary>Window width</summary>
+      <description>Compact mode window width in pixels</description>
+    </key>
+    <key name="window-height" type="i">
+      <default>200</default>
+      <summary>Window height</summary>
+      <description>Compact mode window height in pixels</description>
+    </key>
+  </schema>
+</schemalist>

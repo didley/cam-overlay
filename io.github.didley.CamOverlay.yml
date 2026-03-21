@@ -1,0 +1,23 @@
+id: io.github.didley.CamOverlay
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk//49
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: cam-overlay
+finish-args:
+  - --device=all
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/cam-overlay/cargo-home
+    RUST_BACKTRACE: '1'
+modules:
+  - name: cam-overlay
+    buildsystem: meson
+    sources:
+      - type: dir
+        path: .

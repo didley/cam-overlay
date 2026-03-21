@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.didley.CamOverlay</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Cam Overlay</name>
+  <summary>Webcam preview overlay for screen recording</summary>
+  <description>
+    <p>
+      Cam Overlay displays a live webcam feed as a borderless overlay window,
+      perfect for use during screen recording or video presentations.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Live webcam preview with no recording</li>
+      <li>Circle or rounded rectangle shape clipping</li>
+      <li>1×, 1.5×, and 2× zoom levels</li>
+      <li>Horizontal mirror/flip toggle</li>
+      <li>Double-click to expand to full screen</li>
+      <li>Settings persist across restarts</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.didley.CamOverlay.desktop</launchable>
+  <url type="homepage">https://github.com/didley/cam-overlay</url>
+  <releases>
+    <release version="0.1.0" date="2026-03-22">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
