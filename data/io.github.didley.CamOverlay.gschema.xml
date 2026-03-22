@@ -31,5 +31,10 @@
       <summary>Video fit mode</summary>
       <description>How the video fits in the window: 'cover', 'contain', or 'fill'</description>
     </key>
+    <key name="camera-id" type="s">
+      <default>''</default>
+      <summary>Camera device ID</summary>
+      <description>PipeWire object serial of the selected camera device</description>
+    </key>
   </schema>
 </schemalist>

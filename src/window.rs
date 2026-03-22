@@ -1,12 +1,18 @@
 use adw::prelude::*;
-use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use glib::prelude::IsA;
 use gtk4::{gdk, gio, glib};
 use gstreamer::prelude::*;
+use gstreamer::prelude::DeviceExt as GstDeviceExt;
 use std::cell::{Cell, RefCell};
 
 const SETTINGS_SCHEMA: &str = "io.github.didley.CamOverlay";
+
+fn device_id(device: &gstreamer::Device) -> Option<String> {
+    let props = device.properties()?;
+    props.get::<String>("object.serial").ok()
+        .or_else(|| props.get::<i32>("object.serial").ok().map(|n: i32| n.to_string()))
+}
 
 mod imp {
     use super::*;
@@ -14,6 +20,7 @@ mod imp {
     #[derive(Debug, Default)]
     pub struct CamOverlayWindow {
         pub pipeline: RefCell<Option<gstreamer::Element>>,
+        pub pipeline_generation: Cell<u32>,
         pub settings: RefCell<Option<gio::Settings>>,
         pub overlay_container: RefCell<Option<gtk4::Overlay>>,
         pub video_picture: RefCell<Option<gtk4::Picture>>,
@@ -23,6 +30,8 @@ mod imp {
         pub video_width: Cell<i32>,
         pub video_height: Cell<i32>,
         pub cursor_edge: RefCell<Option<gdk::SurfaceEdge>>,
+        pub device_monitor: RefCell<Option<gstreamer::DeviceMonitor>>,
+        pub camera_menu: RefCell<Option<gio::Menu>>,
     }
 
     #[glib::object_subclass]
@@ -39,6 +48,9 @@ mod imp {
         }
 
         fn dispose(&self) {
+            if let Some(monitor) = self.device_monitor.borrow().as_ref() {
+                monitor.stop();
+            }
             if let Some(pipeline) = self.pipeline.borrow().as_ref() {
                 let _ = pipeline.set_state(gstreamer::State::Null);
             }
@@ -169,6 +181,7 @@ impl CamOverlayWindow {
 
         overlay_container.add_css_class(shape.as_str());
 
+        self.setup_device_monitor();
         self.setup_pipeline();
         self.setup_drag();
         self.setup_motion();
@@ -207,22 +220,87 @@ impl CamOverlayWindow {
     fn setup_pipeline(&self) {
         let imp = self.imp();
 
-        let pipeline = match gstreamer::parse::launch(
-            "pipewiresrc ! videoconvert name=converter ! videoflip name=flipper method=none ! videocrop name=cropper ! videoscale ! gtk4paintablesink name=sink sync=false"
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("Failed to create pipeline: {e}");
-                return;
-            }
-        };
+        // Stop existing pipeline
+        if let Some(pipeline) = imp.pipeline.borrow().as_ref() {
+            let _ = pipeline.set_state(gstreamer::State::Null);
+        }
+        *imp.pipeline.borrow_mut() = None;
+        imp.video_width.set(0);
+        imp.video_height.set(0);
 
-        let sink = pipeline.downcast_ref::<gstreamer::Bin>()
-            .and_then(|bin| bin.by_name("sink"))
-            .expect("Sink element not found");
+        // Determine which camera to use
+        let mut camera_serial = imp.settings.borrow().as_ref()
+            .map(|s| s.string("camera-id").to_string())
+            .unwrap_or_default();
+
+        // If no saved camera or saved camera not found, pick the first available
+        if camera_serial.is_empty() || !self.camera_exists(&camera_serial) {
+            if let Some(monitor) = imp.device_monitor.borrow().as_ref() {
+                let devices = monitor.devices();
+                if let Some(first) = devices.iter().next() {
+                    if let Some(serial) = device_id(&first) {
+                        camera_serial = serial.clone();
+                        if let Some(s) = imp.settings.borrow().as_ref() {
+                            let _ = s.set_string("camera-id", &serial);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Create source element — use device.create_element() for proper
+        // PipeWire node configuration (just setting pipewiresrc path= is
+        // not enough to activate some cameras).
+        let src = if !camera_serial.is_empty() {
+            self.find_device(&camera_serial)
+                .and_then(|dev| dev.create_element(Some("src")).ok())
+        } else {
+            None
+        };
+        let src = src.unwrap_or_else(|| {
+            gstreamer::ElementFactory::make("pipewiresrc")
+                .name("src")
+                .build()
+                .expect("Failed to create pipewiresrc")
+        });
+
+        let converter = gstreamer::ElementFactory::make("videoconvert")
+            .name("converter")
+            .build()
+            .expect("Failed to create videoconvert");
+        let flipper = gstreamer::ElementFactory::make("videoflip")
+            .name("flipper")
+            .build()
+            .expect("Failed to create videoflip");
+        flipper.set_property_from_str("method", "none");
+        let cropper = gstreamer::ElementFactory::make("videocrop")
+            .name("cropper")
+            .build()
+            .expect("Failed to create videocrop");
+        let scaler = gstreamer::ElementFactory::make("videoscale")
+            .build()
+            .expect("Failed to create videoscale");
+        let sink = gstreamer::ElementFactory::make("gtk4paintablesink")
+            .name("sink")
+            .build()
+            .expect("Failed to create gtk4paintablesink");
+        sink.set_property("sync", false);
+
+        let pipeline = gstreamer::Pipeline::new();
+        pipeline.add(&src).expect("Failed to add src");
+        pipeline.add(&converter).expect("Failed to add converter");
+        pipeline.add(&flipper).expect("Failed to add flipper");
+        pipeline.add(&cropper).expect("Failed to add cropper");
+        pipeline.add(&scaler).expect("Failed to add scaler");
+        pipeline.add(&sink).expect("Failed to add sink");
+
+        src.link(&converter).expect("Failed to link src→converter");
+        converter.link(&flipper).expect("Failed to link converter→flipper");
+        flipper.link(&cropper).expect("Failed to link flipper→cropper");
+        cropper.link(&scaler).expect("Failed to link cropper→scaler");
+        scaler.link(&sink).expect("Failed to link scaler→sink");
 
         let paintable = sink.property::<gdk::Paintable>("paintable");
-
         if let Some(picture) = imp.video_picture.borrow().as_ref() {
             picture.set_paintable(Some(&paintable));
         }
@@ -232,23 +310,27 @@ impl CamOverlayWindow {
             .map(|s| s.boolean("flipped"))
             .unwrap_or(false);
         if flipped {
-            if let Some(bin) = pipeline.downcast_ref::<gstreamer::Bin>() {
-                if let Some(flipper) = bin.by_name("flipper") {
-                    flipper.set_property_from_str("method", "horizontal-flip");
-                }
-            }
+            flipper.set_property_from_str("method", "horizontal-flip");
         }
 
-        if let Err(e) = pipeline.set_state(gstreamer::State::Playing) {
+        let pipeline_element = pipeline.upcast::<gstreamer::Element>();
+        if let Err(e) = pipeline_element.set_state(gstreamer::State::Playing) {
             eprintln!("Failed to start pipeline: {e}");
         }
 
-        *imp.pipeline.borrow_mut() = Some(pipeline);
+        *imp.pipeline.borrow_mut() = Some(pipeline_element);
+
+        // Bump generation so any old caps-polling closure exits
+        let generation = imp.pipeline_generation.get() + 1;
+        imp.pipeline_generation.set(generation);
 
         // Poll for negotiated caps on the main thread, then apply saved zoom + fit
         let win = self.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let imp = win.imp();
+            if imp.pipeline_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
             let pipeline_ref = imp.pipeline.borrow();
             let Some(pipeline) = pipeline_ref.as_ref() else {
                 return glib::ControlFlow::Break;
@@ -286,6 +368,23 @@ impl CamOverlayWindow {
             }
             glib::ControlFlow::Continue
         });
+    }
+
+    fn find_device(&self, serial: &str) -> Option<gstreamer::Device> {
+        let monitor = self.imp().device_monitor.borrow();
+        let monitor = monitor.as_ref()?;
+        for device in monitor.devices().iter() {
+            if device_id(&device).as_deref() == Some(serial) {
+                return Some((*device).clone());
+            }
+        }
+        None
+    }
+
+    fn camera_exists(&self, serial: &str) -> bool {
+        self.imp().device_monitor.borrow().as_ref()
+            .map(|m| m.devices().iter().any(|d| device_id(&d).as_deref() == Some(serial)))
+            .unwrap_or(false)
     }
 
     fn setup_drag(&self) {
@@ -430,11 +529,17 @@ impl CamOverlayWindow {
                 overlay.remove_css_class("rounded-rect");
             }
             self.fullscreen();
+            self.update_input_region();
         }
     }
 
     fn setup_context_menu(&self) {
         let menu = gio::Menu::new();
+
+        // Camera section (dynamically populated)
+        let camera_menu = self.imp().camera_menu.borrow().clone()
+            .unwrap_or_else(gio::Menu::new);
+        menu.append_section(Some("Camera"), &camera_menu);
 
         let zoom_section = gio::Menu::new();
         zoom_section.append(Some("1×"), Some("win.zoom::1"));
@@ -479,6 +584,26 @@ impl CamOverlayWindow {
 
     fn setup_actions(&self) {
         let settings = self.imp().settings.borrow().clone().expect("Settings not initialized");
+
+        // Camera action
+        let current_camera = settings.string("camera-id").to_string();
+        let camera_action = gio::SimpleAction::new_stateful(
+            "camera",
+            Some(&glib::VariantTy::STRING),
+            &current_camera.to_variant(),
+        );
+        let win = self.clone();
+        camera_action.connect_activate(move |action, param| {
+            if let Some(v) = param {
+                let serial: String = v.get().unwrap_or_default();
+                action.set_state(&serial.to_variant());
+                if let Some(s) = win.imp().settings.borrow().as_ref() {
+                    let _ = s.set_string("camera-id", &serial);
+                }
+                win.setup_pipeline();
+            }
+        });
+        self.add_action(&camera_action);
 
         // Zoom action
         let zoom_level = settings.int("zoom-level").to_string();
@@ -557,6 +682,61 @@ impl CamOverlayWindow {
         self.add_action(&flip_action);
     }
 
+    fn setup_device_monitor(&self) {
+        let monitor = gstreamer::DeviceMonitor::new();
+        monitor.add_filter(Some("Video/Source"), None);
+
+        if monitor.start().is_err() {
+            eprintln!("Failed to start device monitor");
+            return;
+        }
+
+        // Create the camera menu and populate it
+        let camera_menu = gio::Menu::new();
+        *self.imp().camera_menu.borrow_mut() = Some(camera_menu.clone());
+        self.rebuild_camera_menu(&monitor.devices());
+
+        // Watch for device additions/removals
+        let bus = monitor.bus();
+        let win_weak = self.downgrade();
+        bus.add_watch_local(move |_, msg| {
+            use gstreamer::MessageView;
+            let Some(win) = win_weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            match msg.view() {
+                MessageView::DeviceAdded(_) | MessageView::DeviceRemoved(_) => {
+                    if let Some(monitor) = win.imp().device_monitor.borrow().as_ref() {
+                        win.rebuild_camera_menu(&monitor.devices());
+                    }
+                }
+                _ => {}
+            }
+            glib::ControlFlow::Continue
+        }).ok();
+
+        *self.imp().device_monitor.borrow_mut() = Some(monitor);
+    }
+
+    fn rebuild_camera_menu(&self, devices: &glib::List<gstreamer::Device>) {
+        let imp = self.imp();
+        let camera_menu_ref = imp.camera_menu.borrow();
+        let Some(menu) = camera_menu_ref.as_ref() else { return };
+
+        // Clear existing items
+        while menu.n_items() > 0 {
+            menu.remove(0);
+        }
+
+        for device in devices.iter() {
+            let name = GstDeviceExt::display_name(&*device);
+            if let Some(serial) = device_id(&device) {
+                let action_target = format!("win.camera::{serial}");
+                menu.append(Some(&name), Some(&action_target));
+            }
+        }
+    }
+
     fn apply_zoom(&self, level: i32) {
         let imp = self.imp();
         let width = imp.video_width.get();
@@ -586,12 +766,25 @@ impl CamOverlayWindow {
         let Some(surface) = self.upcast_ref::<gtk4::Window>().surface() else { return; };
         let imp = self.imp();
 
-        let is_shaped = !imp.is_expanded.get()
-            && imp.overlay_container
-                .borrow()
-                .as_ref()
-                .map(|o| o.has_css_class("circle") || o.has_css_class("rounded-rect"))
-                .unwrap_or(false);
+        if imp.is_expanded.get() {
+            // Fullscreen: accept input everywhere.  self.width()/height()
+            // may still reflect the compact size right after fullscreen()
+            // because Wayland configure events are async, so use a value
+            // large enough for any display — the compositor clamps to the
+            // actual surface bounds.
+            let full = gtk4::cairo::Region::create_rectangle(
+                &gtk4::cairo::RectangleInt::new(0, 0, 32767, 32767),
+            );
+            surface.set_input_region(&full);
+            surface.set_opaque_region(None);
+            return;
+        }
+
+        let is_shaped = imp.overlay_container
+            .borrow()
+            .as_ref()
+            .map(|o| o.has_css_class("circle") || o.has_css_class("rounded-rect"))
+            .unwrap_or(false);
 
         // Always use full window for input so resize handles work at all edges
         let full = gtk4::cairo::Region::create_rectangle(
