@@ -35,6 +35,7 @@ mod imp {
 
             app.setup_css();
             app.setup_about_action();
+            app.setup_quit_action();
         }
     }
 
@@ -64,6 +65,15 @@ impl CamOverlayApplication {
             &provider,
             gtk4::STYLE_PROVIDER_PRIORITY_USER,
         );
+    }
+
+    fn setup_quit_action(&self) {
+        let action = gio::SimpleAction::new("quit", None);
+        let app = self.clone();
+        action.connect_activate(move |_, _| {
+            app.quit();
+        });
+        self.add_action(&action);
     }
 
     fn setup_about_action(&self) {
