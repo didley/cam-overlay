@@ -74,12 +74,41 @@ impl CamOverlayApplication {
                 .active_window()
                 .unwrap_or_else(|| panic!("No active window"));
 
-            let about = adw::AboutDialog::builder()
-                .application_name("Cam Overlay")
-                .version(config::VERSION)
-                .application_icon(config::APP_ID)
-                .license_type(gtk4::License::Gpl30)
-                .comments("Webcam preview overlay for screen recording.\n\nTip: Use your compositor's window menu to set Always on Top.\nOn GNOME: Super+Right Click on the window, or Alt+Space.")
+            let content = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+            content.set_margin_top(24);
+            content.set_margin_bottom(24);
+            content.set_margin_start(24);
+            content.set_margin_end(24);
+
+            let icon = gtk4::Image::from_icon_name(config::APP_ID);
+            icon.set_pixel_size(64);
+            content.append(&icon);
+
+            let heading = gtk4::Label::new(Some(&format!("Cam Overlay  v{}", config::VERSION)));
+            heading.add_css_class("title-1");
+            content.append(&heading);
+
+            let body = gtk4::Label::new(None);
+            body.set_markup("Webcam preview overlay for screen recording.\n\nCreated for fun by @didley, with love from Melbourne.\n\n<b>Always on Top</b>\nUse your compositor's window menu to set always on top.\nOn GNOME: Super + Right Click on the window, or Alt + Space.\n\n<b>Full Screen</b>\nDouble left-click the overlay to toggle full screen.\n\nLicense: GPL-3.0-or-later\n<a href=\"https://github.com/didley/cam-overlay\">github.com/didley/cam-overlay</a>");
+            body.set_xalign(0.0);
+            body.set_wrap(true);
+            content.append(&body);
+
+            let toolbar_view = adw::ToolbarView::new();
+            let header = adw::HeaderBar::new();
+            header.set_show_title(false);
+            toolbar_view.add_top_bar(&header);
+
+            let scroll = gtk4::ScrolledWindow::new();
+            scroll.set_child(Some(&content));
+            scroll.set_propagate_natural_height(true);
+            toolbar_view.set_content(Some(&scroll));
+
+            let about = adw::Dialog::builder()
+                .title("About")
+                .child(&toolbar_view)
+                .content_width(450)
+                .content_height(620)
                 .build();
 
             about.present(Some(&window));
