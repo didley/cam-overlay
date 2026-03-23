@@ -80,9 +80,7 @@ impl CamOverlayApplication {
         let action = gio::SimpleAction::new("about", None);
         let app = self.clone();
         action.connect_activate(move |_, _| {
-            let window = app
-                .active_window()
-                .unwrap_or_else(|| panic!("No active window"));
+            let window = app.active_window().expect("No active window");
 
             let content = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
             content.set_margin_top(24);
@@ -114,14 +112,13 @@ impl CamOverlayApplication {
             scroll.set_propagate_natural_height(true);
             toolbar_view.set_content(Some(&scroll));
 
-            let about = adw::Dialog::builder()
+            adw::Dialog::builder()
                 .title("About")
                 .child(&toolbar_view)
                 .content_width(450)
                 .content_height(620)
-                .build();
-
-            about.present(Some(&window));
+                .build()
+                .present(Some(&window));
         });
         self.add_action(&action);
     }
