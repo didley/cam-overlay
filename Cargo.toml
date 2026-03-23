@@ -11,7 +11,5 @@ path = "src/main.rs"
 gtk4 = { version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
 gstreamer = { version = "0.23" }
-gstreamer-video = { version = "0.23" }
 gio = { version = "0.20" }
 glib = { version = "0.20" }
-anyhow = "1.0"
