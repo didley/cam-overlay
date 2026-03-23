@@ -7,6 +7,87 @@ use gstreamer::prelude::DeviceExt as GstDeviceExt;
 use std::cell::{Cell, RefCell};
 
 const SETTINGS_SCHEMA: &str = "io.github.didley.CamOverlay";
+const RESIZE_BORDER: f64 = 16.0;
+const SHAPE_BORDER_WIDTH: f32 = 2.0;
+const CIRCLE_GRAB_RADIUS_OFFSET: f64 = 8.0;
+const ROUNDED_RECT_RADIUS: f32 = 16.0;
+const ZOOM_L2_CROP_FRACTION: i32 = 6; // 1/6th per side → 1.5× zoom
+const ZOOM_L3_CROP_FRACTION: i32 = 4; // 1/4th per side → 2× zoom
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Shape {
+    Circle,
+    RoundedRect,
+}
+
+impl Shape {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "circle" => Self::Circle,
+            _ => Self::RoundedRect,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Circle => "circle",
+            Self::RoundedRect => "rounded-rect",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FitMode {
+    Cover,
+    Fill,
+}
+
+impl FitMode {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "fill" => Self::Fill,
+            _ => Self::Cover,
+        }
+    }
+
+    fn to_gtk(self) -> gtk4::ContentFit {
+        match self {
+            Self::Fill => gtk4::ContentFit::Fill,
+            Self::Cover => gtk4::ContentFit::Cover,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ZoomLevel {
+    One,
+    OnePointFive,
+    Two,
+}
+
+impl ZoomLevel {
+    fn from_i32(n: i32) -> Self {
+        match n {
+            2 => Self::OnePointFive,
+            3 => Self::Two,
+            _ => Self::One,
+        }
+    }
+
+    fn crop_fraction(self) -> Option<i32> {
+        match self {
+            Self::One => None,
+            Self::OnePointFive => Some(ZOOM_L2_CROP_FRACTION),
+            Self::Two => Some(ZOOM_L3_CROP_FRACTION),
+        }
+    }
+}
+
+/// Returns (cx, cy, r) for the inscribed circle of a w×h rectangle.
+fn circle_geometry(w: f64, h: f64) -> (f64, f64, f64) {
+    let r = w.min(h) / 2.0;
+    (w / 2.0, h / 2.0, r)
+}
 
 fn device_id(device: &gstreamer::Device) -> Option<String> {
     let props = device.properties()?;
@@ -60,62 +141,49 @@ mod imp {
     impl WidgetImpl for CamOverlayWindow {
         fn snapshot(&self, snapshot: &gtk4::Snapshot) {
             let widget = self.obj();
-            let overlay_ref = self.overlay_container.borrow();
-            let overlay = overlay_ref.as_ref();
-            let expanded = self.is_expanded.get();
-
-            let is_circle = !expanded && overlay.map(|o| o.has_css_class("circle")).unwrap_or(false);
-            let is_rounded = !expanded && overlay.map(|o| o.has_css_class("rounded-rect")).unwrap_or(false);
-
             let w = widget.width() as f32;
             let h = widget.height() as f32;
             let border_color = [gdk::RGBA::new(0.0, 0.0, 0.0, 0.4); 4];
-            let border_width = [2.0f32; 4];
+            let border_width = [SHAPE_BORDER_WIDTH; 4];
 
-            if is_circle {
-                let size = w.min(h);
-                let x = (w - size) / 2.0;
-                let y = (h - size) / 2.0;
-                let rounded = gtk4::gsk::RoundedRect::from_rect(
-                    gtk4::graphene::Rect::new(x, y, size, size),
-                    size / 2.0,
-                );
-                snapshot.push_rounded_clip(&rounded);
-                self.parent_snapshot(snapshot);
-                snapshot.append_border(&rounded, &border_width, &border_color);
-                snapshot.pop();
-            } else if is_rounded {
-                let rounded = gtk4::gsk::RoundedRect::from_rect(
-                    gtk4::graphene::Rect::new(0.0, 0.0, w, h),
-                    16.0,
-                );
-                snapshot.push_rounded_clip(&rounded);
-                self.parent_snapshot(snapshot);
-                snapshot.append_border(&rounded, &border_width, &border_color);
-                snapshot.pop();
-            } else {
-                self.parent_snapshot(snapshot);
+            match widget.current_shape() {
+                Some(Shape::Circle) => {
+                    let size = w.min(h);
+                    let x = (w - size) / 2.0;
+                    let y = (h - size) / 2.0;
+                    let rounded = gtk4::gsk::RoundedRect::from_rect(
+                        gtk4::graphene::Rect::new(x, y, size, size),
+                        size / 2.0,
+                    );
+                    snapshot.push_rounded_clip(&rounded);
+                    self.parent_snapshot(snapshot);
+                    snapshot.append_border(&rounded, &border_width, &border_color);
+                    snapshot.pop();
+                }
+                Some(Shape::RoundedRect) => {
+                    let rounded = gtk4::gsk::RoundedRect::from_rect(
+                        gtk4::graphene::Rect::new(0.0, 0.0, w, h),
+                        ROUNDED_RECT_RADIUS,
+                    );
+                    snapshot.push_rounded_clip(&rounded);
+                    self.parent_snapshot(snapshot);
+                    snapshot.append_border(&rounded, &border_width, &border_color);
+                    snapshot.pop();
+                }
+                None => {
+                    self.parent_snapshot(snapshot);
+                }
             }
         }
 
         fn contains(&self, x: f64, y: f64) -> bool {
             let widget = self.obj();
-            let is_circle = !self.is_expanded.get()
-                && self.overlay_container
-                    .borrow()
-                    .as_ref()
-                    .map(|o| o.has_css_class("circle"))
-                    .unwrap_or(false);
-
-            if is_circle {
-                let w = widget.width() as f64;
-                let h = widget.height() as f64;
-                let cx = w / 2.0;
-                let cy = h / 2.0;
+            if widget.current_shape() == Some(Shape::Circle) {
+                let (cx, cy, r) = circle_geometry(widget.width() as f64, widget.height() as f64);
                 let dx = x - cx;
                 let dy = y - cy;
                 // Circle interior + thin ring outside the edge for resize handle grab
-                let grab_r = w.min(h) / 2.0 + 8.0;
+                let grab_r = r + CIRCLE_GRAB_RADIUS_OFFSET;
                 dx * dx + dy * dy <= grab_r * grab_r
             } else {
                 self.parent_contains(x, y)
@@ -139,6 +207,33 @@ impl CamOverlayWindow {
             .build()
     }
 
+    fn settings(&self) -> std::cell::Ref<'_, gio::Settings> {
+        std::cell::Ref::map(self.imp().settings.borrow(), |s| {
+            s.as_ref().expect("settings accessed before init_window")
+        })
+    }
+
+    fn pipeline_element(&self, name: &str) -> Option<gstreamer::Element> {
+        let pipeline = self.imp().pipeline.borrow();
+        let bin = pipeline.as_ref()?.downcast_ref::<gstreamer::Bin>()?;
+        bin.by_name(name)
+    }
+
+    fn current_shape(&self) -> Option<Shape> {
+        if self.imp().is_expanded.get() {
+            return None;
+        }
+        let overlay = self.imp().overlay_container.borrow();
+        let o = overlay.as_ref()?;
+        if o.has_css_class("circle") {
+            Some(Shape::Circle)
+        } else if o.has_css_class("rounded-rect") {
+            Some(Shape::RoundedRect)
+        } else {
+            None
+        }
+    }
+
     fn init_window(&self) {
         let imp = self.imp();
 
@@ -152,8 +247,8 @@ impl CamOverlayWindow {
 
         let saved_width = settings.int("window-width");
         let saved_height = settings.int("window-height");
-        let shape = settings.string("shape");
-        let (init_w, init_h) = if shape.as_str() == "circle" {
+        let shape = Shape::from_str(&settings.string("shape"));
+        let (init_w, init_h) = if shape == Shape::Circle {
             let s = saved_width.min(saved_height).max(1);
             (s, s)
         } else {
@@ -166,12 +261,7 @@ impl CamOverlayWindow {
         let overlay_container = gtk4::Overlay::new();
         let video_picture = gtk4::Picture::new();
 
-        let fit_mode = settings.string("fit-mode");
-        let fit = match fit_mode.as_str() {
-            "fill" => gtk4::ContentFit::Fill,
-            _      => gtk4::ContentFit::Cover,
-        };
-        video_picture.set_content_fit(fit);
+        video_picture.set_content_fit(FitMode::from_str(&settings.string("fit-mode")).to_gtk());
 
         overlay_container.set_child(Some(&video_picture));
         self.set_child(Some(&overlay_container));
@@ -196,10 +286,7 @@ impl CamOverlayWindow {
                 let mut w = win.default_width();
                 let mut h = win.default_height();
                 if w > 0 && h > 0 {
-                    let is_circle = win.imp().settings.borrow().as_ref()
-                        .map(|s| s.string("shape") == "circle")
-                        .unwrap_or(false);
-                    if is_circle {
+                    if win.settings().string("shape") == "circle" {
                         let size = w.min(h);
                         w = size;
                         h = size;
@@ -207,10 +294,8 @@ impl CamOverlayWindow {
                     }
                     win.imp().compact_width.set(w);
                     win.imp().compact_height.set(h);
-                    if let Some(s) = win.imp().settings.borrow().as_ref() {
-                        let _ = s.set_int("window-width", w);
-                        let _ = s.set_int("window-height", h);
-                    }
+                    let _ = win.settings().set_int("window-width", w);
+                    let _ = win.settings().set_int("window-height", h);
                 }
             }
             win.update_input_region();
@@ -229,9 +314,7 @@ impl CamOverlayWindow {
         imp.video_height.set(0);
 
         // Determine which camera to use
-        let mut camera_serial = imp.settings.borrow().as_ref()
-            .map(|s| s.string("camera-id").to_string())
-            .unwrap_or_default();
+        let mut camera_serial = self.settings().string("camera-id").to_string();
 
         // If no saved camera or saved camera not found, pick the first available
         if camera_serial.is_empty() || !self.camera_exists(&camera_serial) {
@@ -240,9 +323,7 @@ impl CamOverlayWindow {
                 if let Some(first) = devices.iter().next() {
                     if let Some(serial) = device_id(&first) {
                         camera_serial = serial.clone();
-                        if let Some(s) = imp.settings.borrow().as_ref() {
-                            let _ = s.set_string("camera-id", &serial);
-                        }
+                        let _ = self.settings().set_string("camera-id", &serial);
                     }
                 }
             }
@@ -306,10 +387,7 @@ impl CamOverlayWindow {
         }
 
         // Apply saved flip
-        let flipped = imp.settings.borrow().as_ref()
-            .map(|s| s.boolean("flipped"))
-            .unwrap_or(false);
-        if flipped {
+        if self.settings().boolean("flipped") {
             flipper.set_property_from_str("method", "horizontal-flip");
         }
 
@@ -355,15 +433,11 @@ impl CamOverlayWindow {
             if width > 0 && height > 0 {
                 imp.video_width.set(width);
                 imp.video_height.set(height);
-                let zoom = imp.settings.borrow().as_ref()
-                    .map(|s| s.int("zoom-level"))
-                    .unwrap_or(1);
-                let fit_mode = imp.settings.borrow().as_ref()
-                    .map(|s| s.string("fit-mode").to_string())
-                    .unwrap_or_default();
+                let zoom = ZoomLevel::from_i32(win.settings().int("zoom-level"));
+                let fit_mode = FitMode::from_str(&win.settings().string("fit-mode"));
                 drop(pipeline_ref);
                 win.apply_zoom(zoom);
-                win.apply_fit_mode(&fit_mode);
+                win.apply_fit_mode(fit_mode);
                 return glib::ControlFlow::Break;
             }
             glib::ControlFlow::Continue
@@ -433,7 +507,6 @@ impl CamOverlayWindow {
     }
 
     fn setup_motion(&self) {
-        const BORDER: f64 = 16.0;
         let motion = gtk4::EventControllerMotion::new();
         let win = self.clone();
         motion.connect_motion(move |_, x, y| {
@@ -442,19 +515,12 @@ impl CamOverlayWindow {
             let w = win.width() as f64;
             let h = win.height() as f64;
 
-            let is_circle = !imp.is_expanded.get()
-                && imp.overlay_container.borrow().as_ref()
-                    .map(|o| o.has_css_class("circle"))
-                    .unwrap_or(false);
-
-            let edge = if is_circle {
-                let cx = w / 2.0;
-                let cy = h / 2.0;
-                let r = w.min(h) / 2.0;
+            let edge = if win.current_shape() == Some(Shape::Circle) {
+                let (cx, cy, r) = circle_geometry(w, h);
                 let dx = x - cx;
                 let dy = y - cy;
                 let dist_sq = dx * dx + dy * dy;
-                let inner = r - BORDER;
+                let inner = r - RESIZE_BORDER;
                 // Near the circle edge → corner resize based on quadrant so both
                 // dimensions change together and the window stays square
                 if dist_sq >= inner * inner {
@@ -467,10 +533,10 @@ impl CamOverlayWindow {
                     None // inside circle → move gesture
                 }
             } else {
-                let left   = x < BORDER;
-                let right  = x > w - BORDER;
-                let top    = y < BORDER;
-                let bottom = y > h - BORDER;
+                let left   = x < RESIZE_BORDER;
+                let right  = x > w - RESIZE_BORDER;
+                let top    = y < RESIZE_BORDER;
+                let bottom = y > h - RESIZE_BORDER;
                 match (left, right, top, bottom) {
                     (true, _, true, _) => Some(gdk::SurfaceEdge::NorthWest),
                     (_, true, true, _) => Some(gdk::SurfaceEdge::NorthEast),
@@ -512,9 +578,7 @@ impl CamOverlayWindow {
             imp.is_expanded.set(false);
             self.unfullscreen();
             if let Some(overlay) = imp.overlay_container.borrow().as_ref() {
-                let shape = imp.settings.borrow().as_ref()
-                    .map(|s| s.string("shape").to_string())
-                    .unwrap_or_else(|| "circle".to_string());
+                let shape = self.settings().string("shape").to_string();
                 overlay.add_css_class(&shape);
             }
             self.update_input_region();
@@ -598,9 +662,7 @@ impl CamOverlayWindow {
             if let Some(v) = param {
                 let serial: String = v.get().unwrap_or_default();
                 action.set_state(&serial.to_variant());
-                if let Some(s) = win.imp().settings.borrow().as_ref() {
-                    let _ = s.set_string("camera-id", &serial);
-                }
+                let _ = win.settings().set_string("camera-id", &serial);
                 win.setup_pipeline();
             }
         });
@@ -617,12 +679,10 @@ impl CamOverlayWindow {
         zoom_action.connect_activate(move |action, param| {
             if let Some(v) = param {
                 let level_str: String = v.get().unwrap_or_default();
-                let level: i32 = level_str.parse().unwrap_or(1);
+                let level_i32: i32 = level_str.parse().unwrap_or(1);
                 action.set_state(&level_str.to_variant());
-                win.apply_zoom(level);
-                if let Some(s) = win.imp().settings.borrow().as_ref() {
-                    let _ = s.set_int("zoom-level", level);
-                }
+                win.apply_zoom(ZoomLevel::from_i32(level_i32));
+                let _ = win.settings().set_int("zoom-level", level_i32);
             }
         });
         self.add_action(&zoom_action);
@@ -637,12 +697,10 @@ impl CamOverlayWindow {
         let win = self.clone();
         shape_action.connect_activate(move |action, param| {
             if let Some(v) = param {
-                let shape: String = v.get().unwrap_or_default();
-                action.set_state(&shape.to_variant());
-                win.apply_shape(&shape);
-                if let Some(s) = win.imp().settings.borrow().as_ref() {
-                    let _ = s.set_string("shape", &shape);
-                }
+                let shape_str: String = v.get().unwrap_or_default();
+                action.set_state(&shape_str.to_variant());
+                win.apply_shape(Shape::from_str(&shape_str));
+                let _ = win.settings().set_string("shape", &shape_str);
             }
         });
         self.add_action(&shape_action);
@@ -657,12 +715,10 @@ impl CamOverlayWindow {
         let win = self.clone();
         fit_action.connect_activate(move |action, param| {
             if let Some(v) = param {
-                let mode: String = v.get().unwrap_or_default();
-                action.set_state(&mode.to_variant());
-                win.apply_fit_mode(&mode);
-                if let Some(s) = win.imp().settings.borrow().as_ref() {
-                    let _ = s.set_string("fit-mode", &mode);
-                }
+                let mode_str: String = v.get().unwrap_or_default();
+                action.set_state(&mode_str.to_variant());
+                win.apply_fit_mode(FitMode::from_str(&mode_str));
+                let _ = win.settings().set_string("fit-mode", &mode_str);
             }
         });
         self.add_action(&fit_action);
@@ -676,9 +732,7 @@ impl CamOverlayWindow {
             let new_state = !current;
             action.set_state(&new_state.to_variant());
             win.apply_flip(new_state);
-            if let Some(s) = win.imp().settings.borrow().as_ref() {
-                let _ = s.set_boolean("flipped", new_state);
-            }
+            let _ = win.settings().set_boolean("flipped", new_state);
         });
         self.add_action(&flip_action);
     }
@@ -738,27 +792,22 @@ impl CamOverlayWindow {
         }
     }
 
-    fn apply_zoom(&self, level: i32) {
+    fn apply_zoom(&self, level: ZoomLevel) {
         let imp = self.imp();
         let width = imp.video_width.get();
         let height = imp.video_height.get();
         if width == 0 || height == 0 {
             return;
         }
-        let (left, right, top, bottom) = match level {
-            2 => { let lr = width / 6; let tb = height / 6; (lr, lr, tb, tb) }
-            3 => { let lr = width / 4; let tb = height / 4; (lr, lr, tb, tb) }
-            _ => (0, 0, 0, 0),
+        let (left, right, top, bottom) = match level.crop_fraction() {
+            Some(f) => { let lr = width / f; let tb = height / f; (lr, lr, tb, tb) }
+            None => (0, 0, 0, 0),
         };
-        if let Some(pipeline) = imp.pipeline.borrow().as_ref() {
-            if let Some(bin) = pipeline.downcast_ref::<gstreamer::Bin>() {
-                if let Some(cropper) = bin.by_name("cropper") {
-                    cropper.set_property("left", left);
-                    cropper.set_property("right", right);
-                    cropper.set_property("top", top);
-                    cropper.set_property("bottom", bottom);
-                }
-            }
+        if let Some(cropper) = self.pipeline_element("cropper") {
+            cropper.set_property("left", left);
+            cropper.set_property("right", right);
+            cropper.set_property("top", top);
+            cropper.set_property("bottom", bottom);
         }
     }
 
@@ -804,7 +853,7 @@ impl CamOverlayWindow {
         }
     }
 
-    fn apply_shape(&self, shape: &str) {
+    fn apply_shape(&self, shape: Shape) {
         let imp = self.imp();
         if imp.is_expanded.get() {
             return;
@@ -812,9 +861,9 @@ impl CamOverlayWindow {
         if let Some(overlay) = imp.overlay_container.borrow().as_ref() {
             overlay.remove_css_class("circle");
             overlay.remove_css_class("rounded-rect");
-            overlay.add_css_class(shape);
+            overlay.add_css_class(shape.as_str());
         }
-        if shape == "circle" {
+        if shape == Shape::Circle {
             let w = imp.compact_width.get().max(1);
             let h = imp.compact_height.get().max(1);
             let size = w.min(h);
@@ -825,23 +874,15 @@ impl CamOverlayWindow {
         self.update_input_region();
     }
 
-    fn apply_fit_mode(&self, mode: &str) {
-        let fit = match mode {
-            "fill" => gtk4::ContentFit::Fill,
-            _ => gtk4::ContentFit::Cover,
-        };
+    fn apply_fit_mode(&self, mode: FitMode) {
         if let Some(picture) = self.imp().video_picture.borrow().as_ref() {
-            picture.set_content_fit(fit);
+            picture.set_content_fit(mode.to_gtk());
         }
     }
 
     fn apply_flip(&self, flipped: bool) {
-        if let Some(pipeline) = self.imp().pipeline.borrow().as_ref() {
-            if let Some(bin) = pipeline.downcast_ref::<gstreamer::Bin>() {
-                if let Some(flipper) = bin.by_name("flipper") {
-                    flipper.set_property_from_str("method", if flipped { "horizontal-flip" } else { "none" });
-                }
-            }
+        if let Some(flipper) = self.pipeline_element("flipper") {
+            flipper.set_property_from_str("method", if flipped { "horizontal-flip" } else { "none" });
         }
     }
 }
