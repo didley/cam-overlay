@@ -8,6 +8,7 @@ command: camoverlay
 finish-args:
   - --device=dri
   - --socket=wayland
+  - --socket=fallback-x11
   - --filesystem=xdg-run/pipewire-0:ro
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
