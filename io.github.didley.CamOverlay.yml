@@ -1,16 +1,14 @@
 id: io.github.didley.CamOverlay
 runtime: org.gnome.Platform
 runtime-version: '50'
-sdk: org.gnome.Sdk//50
+sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: camoverlay
 finish-args:
-  - --device=all
-  - --share=ipc
+  - --device=dri
   - --socket=wayland
-  - --socket=fallback-x11
-  - --filesystem=xdg-run/pipewire-0
+  - --filesystem=xdg-run/pipewire-0:ro
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
