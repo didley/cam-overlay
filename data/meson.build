@@ -22,6 +22,9 @@ install_data('io.github.didley.CamOverlay.gschema.xml',
 gnome.compile_schemas(
   depend_files: 'io.github.didley.CamOverlay.gschema.xml',
 )
+gnome.post_install(
+  glib_compile_schemas: true,
+)
 
 # Install CSS
 install_data('style.css',

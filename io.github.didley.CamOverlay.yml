@@ -17,8 +17,6 @@ build-options:
 modules:
   - name: camoverlay
     buildsystem: meson
-    post-install:
-      - glib-compile-schemas /app/share/glib-2.0/schemas
     config-opts:
       - -Dbuildtype=release
     sources:
