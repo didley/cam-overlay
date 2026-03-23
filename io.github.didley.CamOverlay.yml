@@ -1,6 +1,6 @@
 id: io.github.didley.CamOverlay
 runtime: org.gnome.Platform
-runtime-version: '50'
+runtime-version: "50"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -13,7 +13,7 @@ build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
     CARGO_HOME: /run/build/camoverlay/cargo-home
-    RUST_BACKTRACE: '1'
+    RUST_BACKTRACE: "1"
 modules:
   - name: camoverlay
     buildsystem: meson
