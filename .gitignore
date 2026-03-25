@@ -1,4 +1,6 @@
 vendor/
 build/
 .claude
+.flatpak-builder/
 target/
+src/config.rs
