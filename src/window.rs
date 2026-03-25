@@ -347,6 +347,15 @@ impl CamOverlayWindow {
                     .expect("Failed to create pipewiresrc")
             });
 
+        let capsfilter = gstreamer::ElementFactory::make("capsfilter")
+            .name("capsfilter")
+            .build()
+            .expect("Failed to create capsfilter");
+        let caps = gstreamer::Caps::builder("video/x-raw")
+            .field("framerate", gstreamer::Fraction::new(30, 1))
+            .build();
+        capsfilter.set_property("caps", &caps);
+
         let converter = gstreamer::ElementFactory::make("videoconvert")
             .name("converter")
             .build()
@@ -371,13 +380,15 @@ impl CamOverlayWindow {
 
         let pipeline = gstreamer::Pipeline::new();
         pipeline.add(&src).expect("Failed to add src");
+        pipeline.add(&capsfilter).expect("Failed to add capsfilter");
         pipeline.add(&converter).expect("Failed to add converter");
         pipeline.add(&flipper).expect("Failed to add flipper");
         pipeline.add(&cropper).expect("Failed to add cropper");
         pipeline.add(&scaler).expect("Failed to add scaler");
         pipeline.add(&sink).expect("Failed to add sink");
 
-        src.link(&converter).expect("Failed to link src→converter");
+        src.link(&capsfilter).expect("Failed to link src→capsfilter");
+        capsfilter.link(&converter).expect("Failed to link capsfilter→converter");
         converter.link(&flipper).expect("Failed to link converter→flipper");
         flipper.link(&cropper).expect("Failed to link flipper→cropper");
         cropper.link(&scaler).expect("Failed to link cropper→scaler");
