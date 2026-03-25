@@ -317,6 +317,7 @@ impl CamOverlayWindow {
 
         // If no saved camera or saved camera not found, pick the first available
         if camera_serial.is_empty() || !self.camera_exists(&camera_serial) {
+            camera_serial.clear();
             if let Some(monitor) = imp.device_monitor.borrow().as_ref() {
                 let devices = monitor.devices();
                 if let Some(first) = devices.iter().next() {
@@ -328,21 +329,22 @@ impl CamOverlayWindow {
             }
         }
 
+        if camera_serial.is_empty() {
+            self.show_no_camera_dialog();
+            return;
+        }
+
         // Create source element — use device.create_element() for proper
         // PipeWire node configuration (just setting pipewiresrc path= is
         // not enough to activate some cameras).
-        let src = if !camera_serial.is_empty() {
-            self.find_device(&camera_serial)
-                .and_then(|dev| dev.create_element(Some("src")).ok())
-        } else {
-            None
-        };
-        let src = src.unwrap_or_else(|| {
-            gstreamer::ElementFactory::make("pipewiresrc")
-                .name("src")
-                .build()
-                .expect("Failed to create pipewiresrc")
-        });
+        let src = self.find_device(&camera_serial)
+            .and_then(|dev| dev.create_element(Some("src")).ok())
+            .unwrap_or_else(|| {
+                gstreamer::ElementFactory::make("pipewiresrc")
+                    .name("src")
+                    .build()
+                    .expect("Failed to create pipewiresrc")
+            });
 
         let converter = gstreamer::ElementFactory::make("videoconvert")
             .name("converter")
@@ -730,12 +732,28 @@ impl CamOverlayWindow {
         self.add_action(&flip_action);
     }
 
+    fn show_no_camera_dialog(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("No Camera Found"),
+            Some("No video source was detected. Please connect a camera and try again."),
+        );
+        dialog.add_response("close", "Close");
+        dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
+        let win = self.clone();
+        dialog.connect_response(None, move |_, _| {
+            if let Some(app) = win.application() {
+                app.downcast_ref::<gtk4::Application>().unwrap().quit();
+            }
+        });
+        dialog.present(Some(self));
+    }
+
     fn setup_device_monitor(&self) {
         let monitor = gstreamer::DeviceMonitor::new();
         monitor.add_filter(Some("Video/Source"), None);
 
         if monitor.start().is_err() {
-            eprintln!("Failed to start device monitor");
+            self.show_no_camera_dialog();
             return;
         }
 
