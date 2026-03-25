@@ -27,6 +27,11 @@
   <url type="homepage">https://github.com/didley/camoverlay</url>
   <url type="vcs-browser">https://github.com/didley/camoverlay</url>
   <releases>
+    <release version="1.0.0" date="2026-03-26">
+      <description>
+        <p>Release 1.0.0.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-03-22">
       <description>
         <p>Initial release.</p>
