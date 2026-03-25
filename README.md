@@ -22,17 +22,19 @@ No recording — just a live preview with zoom, shape, and flip controls via rig
 ## Features
 
 - Live webcam preview (PipeWire)
+- Multiple camera support with hot-plug detection
 - Circle or rounded rectangle shape clipping
+- Crop or stretch video fit modes
 - 1×, 1.5×, and 2× zoom
 - Horizontal mirror/flip
-- Double-click to expand to near-fullscreen
-- Drag to move the window
-- Settings persist across restarts
+- Double-click to toggle fullscreen, Escape key to exit
+- Drag to move, drag edges/corners to resize
+- All settings persist across restarts
 
 ## Tips
 
 - Use your compositor's window manager (e.g. `Super+Right Click` on GNOME) to set **Always on Top**
-- Resize by dragging the window edges/corners
+- Right-click the overlay to access all controls
 
 ## Build
 
@@ -40,8 +42,8 @@ Requires [`just`](https://github.com/casey/just). See [`justfile`](justfile).
 
 ## Requirements
 
-- GNOME Platform 49
-- GStreamer with PipeWire support (`gst-plugins-pipewire`)
+- GNOME Platform 50
+- GStreamer with PipeWire support
 - Rust stable toolchain
 
 ## License
