@@ -275,6 +275,7 @@ impl CamOverlayWindow {
         self.setup_drag();
         self.setup_motion();
         self.setup_double_click();
+        self.setup_escape_to_exit_fullscreen();
         self.setup_context_menu();
         self.setup_actions();
 
@@ -590,6 +591,19 @@ impl CamOverlayWindow {
             self.fullscreen();
             self.update_input_region();
         }
+    }
+
+    fn setup_escape_to_exit_fullscreen(&self) {
+        let key_ctrl = gtk4::EventControllerKey::new();
+        let win = self.clone();
+        key_ctrl.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gdk::Key::Escape && win.imp().is_expanded.get() {
+                win.toggle_expanded();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        self.add_controller(key_ctrl);
     }
 
     fn setup_context_menu(&self) {
