@@ -351,9 +351,14 @@ impl CamOverlayWindow {
             .name("capsfilter")
             .build()
             .expect("Failed to create capsfilter");
-        let caps = gstreamer::Caps::builder("video/x-raw")
-            .field("framerate", gstreamer::Fraction::new(30, 1))
-            .build();
+        // Don't pin the framerate. pipewiresrc advertises width/height/framerate
+        // as independent ranges, so a fixed framerate lets fixation pick the
+        // largest resolution with that rate attached — a combination many cameras
+        // don't actually support (e.g. Logitech Brio 101 offers raw 1080p at 5fps
+        // only, 30fps raw only up to 640x480), and the node rejects it with
+        // "set output format: -22" → not-negotiated → black frame, camera LED off.
+        // Leaving framerate unset lets the device's preferred format win.
+        let caps = gstreamer::Caps::builder("video/x-raw").build();
         capsfilter.set_property("caps", &caps);
 
         let converter = gstreamer::ElementFactory::make("videoconvert")
