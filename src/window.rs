@@ -115,6 +115,10 @@ mod imp {
         pub cursor_edge: RefCell<Option<gdk::SurfaceEdge>>,
         pub device_monitor: RefCell<Option<gstreamer::DeviceMonitor>>,
         pub camera_menu: RefCell<Option<gio::Menu>>,
+        // BusWatchGuard removes its watch on drop, so both guards must be kept
+        // alive for as long as the watch should stay installed.
+        pub monitor_bus_watch: RefCell<Option<gstreamer::bus::BusWatchGuard>>,
+        pub pipeline_bus_watch: RefCell<Option<gstreamer::bus::BusWatchGuard>>,
     }
 
     #[glib::object_subclass]
@@ -402,6 +406,42 @@ impl CamOverlayWindow {
         // Apply saved flip
         if self.settings().boolean("flipped") {
             flipper.set_property_from_str("method", "horizontal-flip");
+        }
+
+        // Surface asynchronous pipeline failures. set_state() below reports only
+        // synchronous errors, so without this watch a failure to negotiate caps or
+        // open the device leaves the user with a silent black window.
+        if let Some(bus) = pipeline.bus() {
+            let win_weak = self.downgrade();
+            let watch = bus.add_watch_local(move |_, msg| {
+                let Some(win) = win_weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                match msg.view() {
+                    MessageView::Error(err) => {
+                        let src = err
+                            .src()
+                            .map(|s| s.path_string().to_string())
+                            .unwrap_or_else(|| "pipeline".to_string());
+                        let detail = err.debug().unwrap_or_default();
+                        eprintln!("Pipeline error from {src}: {} ({detail})", err.error());
+                        win.show_pipeline_error_dialog(&err.error().to_string());
+                        return glib::ControlFlow::Break;
+                    }
+                    MessageView::Warning(w) => {
+                        eprintln!("Pipeline warning: {}", w.error());
+                    }
+                    _ => {}
+                }
+                glib::ControlFlow::Continue
+            });
+
+            // Replacing the guard drops the previous one, removing the watch that
+            // belonged to the pipeline we just tore down.
+            match watch {
+                Ok(guard) => *imp.pipeline_bus_watch.borrow_mut() = Some(guard),
+                Err(e) => eprintln!("Failed to watch pipeline bus: {e}"),
+            }
         }
 
         let pipeline_element = pipeline.upcast::<gstreamer::Element>();
@@ -773,6 +813,20 @@ impl CamOverlayWindow {
         dialog.present(Some(self));
     }
 
+    /// Non-fatal: the video stream is dead, but another camera may still work,
+    /// so leave the window up and let the user pick one from the context menu.
+    fn show_pipeline_error_dialog(&self, message: &str) {
+        let dialog = adw::AlertDialog::new(
+            Some("Camera Error"),
+            Some(&format!(
+                "The video stream could not be started.\n\n{message}\n\n\
+                 Try selecting a different camera from the right-click menu."
+            )),
+        );
+        dialog.add_response("close", "Close");
+        dialog.present(Some(self));
+    }
+
     fn setup_device_monitor(&self) {
         let monitor = gstreamer::DeviceMonitor::new();
         monitor.add_filter(Some("Video/Source"), None);
@@ -790,7 +844,7 @@ impl CamOverlayWindow {
         // Watch for device additions/removals
         let bus = monitor.bus();
         let win_weak = self.downgrade();
-        bus.add_watch_local(move |_, msg| {
+        let watch = bus.add_watch_local(move |_, msg| {
             let Some(win) = win_weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
@@ -803,7 +857,13 @@ impl CamOverlayWindow {
                 _ => {}
             }
             glib::ControlFlow::Continue
-        }).ok();
+        });
+
+        // Keep the guard alive — dropping it removes the watch immediately.
+        match watch {
+            Ok(guard) => *self.imp().monitor_bus_watch.borrow_mut() = Some(guard),
+            Err(e) => eprintln!("Failed to watch device monitor bus, hot-plug disabled: {e}"),
+        }
 
         *self.imp().device_monitor.borrow_mut() = Some(monitor);
     }
