@@ -241,6 +241,7 @@ impl CamOverlayWindow {
 
         self.add_css_class("camoverlay");
         self.set_decorated(false);
+        self.set_title(Some("Cam Overlay - PiP"));
         self.set_resizable(true);
         self.set_size_request(60, 60);
 

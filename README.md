@@ -33,7 +33,7 @@ No recording — just a live preview with zoom, shape, and flip controls via rig
 
 ## Tips
 
-- Use your compositor's window manager (e.g. `Super+Right Click` on GNOME) to set **Always on Top**
+- Use your compositor's window manager (e.g. `Super+Right Click` on GNOME) to set **Always on Top** or a great extension for this is [PiP on Top](https://extensions.gnome.org/extension/4691/pip-on-top/)
 - Right-click the overlay to access all controls
 
 ## Build
