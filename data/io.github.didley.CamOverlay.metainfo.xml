@@ -27,6 +27,11 @@
   <url type="homepage">https://github.com/didley/camoverlay</url>
   <url type="vcs-browser">https://github.com/didley/camoverlay</url>
   <releases>
+    <release version="1.1.1" date="2026-09-03">
+      <description>
+        <p>Fix meson_version regression that broke the Flathub build</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-08-31">
       <description>
         <p>Tag window for always-on-top PiP extension support</p>
